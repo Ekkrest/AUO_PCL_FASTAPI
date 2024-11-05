@@ -1,16 +1,1 @@
-[
-    {
-        "weight_id": 0,
-        "name": "testvqvae",
-        "info": null,
-        "file_name": "best.pt",
-        "file_path": "./vqvae_weights/0"
-    },
-    {
-        "weight_id": 1,
-        "name": "123",
-        "info": null,
-        "file_name": "best.pt",
-        "file_path": "./vqvae_weights/1"
-    }
-]
+[]
