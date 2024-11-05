@@ -1,0 +1,32 @@
+aug_plus: true
+batch_size: 64
+cos: true
+data: /mnt/backups/kevin/c101_4class_patch_data
+dist_backend: nccl
+dist_url: tcp://224.66.41.62:23456
+epochs: 800
+exp_dir: c101_cluster_res2netFFM_one_patch_data_negative_sample_notclass1_contrastive_head
+gpu: null
+low_dim: 128
+lr: 0.03
+mlp: true
+moco_m: 0.999
+momentum: 0.9
+multiprocessing_distributed: false
+num_cluster: '12'
+pcl_r: 4096
+print_freq: 1000
+rank: -1
+resume: ''
+schedule:
+- 120
+- 160
+seed: null
+start_epoch: 0
+temperature: 0.2
+warmup_epoch: 500
+weight_decay: 0.0001
+workers: 2
+world_size: -1
+
+

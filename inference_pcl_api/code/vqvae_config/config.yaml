@@ -1,0 +1,14 @@
+exp_name: yy
+model_path: ./vqvae_weights/0/best.pt
+data_dir: ./vqvae_data/test_vqvae_dir
+hidden_size: 512
+k: 1024
+batch_size: 10
+negative_sample_number: 100
+num_workers: 6
+device: cuda
+moco_model_path: ./weights/1/checkpoint_0019.pth.tar
+n_clusters: 4
+defect_img_folder: ./dataset/yy/defect_img
+defect_mask_folder: ./dataset/yy/defect_mask
+result_name: iii

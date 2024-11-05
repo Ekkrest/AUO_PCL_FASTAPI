@@ -1,0 +1,16 @@
+[
+    {
+        "weight_id": 0,
+        "name": null,
+        "info": null,
+        "file_name": null,
+        "file_path": null
+    },
+    {
+        "weight_id": 1,
+        "name": "inference_test",
+        "info": null,
+        "file_name": "checkpoint_0019.pth.tar",
+        "file_path": "./weights/1"
+    }
+]

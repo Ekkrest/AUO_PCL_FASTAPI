@@ -1,0 +1,30 @@
+[
+    {
+        "weight_id": 1,
+        "name": "test_train",
+        "info": null,
+        "file_name": "best.pth.tar",
+        "file_path": "./weights/1"
+    },
+    {
+        "weight_id": 2,
+        "name": "checkpoint_0009",
+        "info": "training checkpoint",
+        "file_name": "checkpoint_0009.pth.tar",
+        "file_path": "./weights/2"
+    },
+    {
+        "weight_id": 3,
+        "name": "checkpoint_0009",
+        "info": "training checkpoint",
+        "file_name": "checkpoint_0009.pth.tar",
+        "file_path": "./weights/3"
+    },
+    {
+        "weight_id": 4,
+        "name": "checkpoint_0009",
+        "info": "training checkpoint",
+        "file_name": "checkpoint_0009.pth.tar",
+        "file_path": "./weights/4"
+    }
+]

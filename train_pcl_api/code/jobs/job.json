@@ -1,0 +1,18 @@
+[
+    {
+        "job_id": 1,
+        "pid": 3169,
+        "name": "123",
+        "info": null,
+        "type": "train",
+        "status": "Finished"
+    },
+    {
+        "job_id": 6,
+        "pid": 18131,
+        "name": "123",
+        "info": null,
+        "type": "train",
+        "status": "Finished"
+    }
+]

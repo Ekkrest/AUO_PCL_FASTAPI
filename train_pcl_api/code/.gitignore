@@ -1,0 +1,12 @@
+# 忽略所有 .csv 檔案
+*.csv
+
+# 忽略所有 .pth.tar 檔案
+*.pth.tar
+
+# 忽略包含 .pkl 檔案的資料夾
+*.pkl
+
+# 忽略包含 .pth.tar 檔案的資料夾
+**/*.pth.tar/
+
