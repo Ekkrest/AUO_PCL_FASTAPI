@@ -275,6 +275,7 @@ def _get_vqvae_weight_index(weight_id):
         return w_idx, weight_list[w_idx]
 
 def _write_to_csv(csv_file_path, data, mode='w'):
+    os.makedirs(os.path.dirname(csv_file_path), exist_ok=True)
     with open(csv_file_path, mode=mode, newline='') as file:
         writer = csv.writer(file)
         writer.writerows(data)
