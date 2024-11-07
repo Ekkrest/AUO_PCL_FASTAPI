@@ -9,6 +9,7 @@ import signal
 import shutil
 import csv
 import yaml
+from threading import Lock
 
 class FileEventHandler(FileSystemEventHandler):
     def __init__(self, callback_url, j_id, tj_id):
@@ -148,6 +149,13 @@ if __name__ == "__main__":
 
     with open('./status.json', 'w') as f:
         pass
+    lock = Lock()  # 假设你在之前已经创建了 lock 对象
+
+    with lock:
+        init_status = dict()
+        init_status['completed'] = False
+        with open('./status.json', 'w') as f:
+            json.dump(init_status, f)
 
     pid = subprocess.Popen(["sh", "./run.sh"], shell=False)
 

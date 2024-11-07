@@ -264,144 +264,185 @@ async def post_train(response: Response,
         job_id: the job_id of the training process
 
     """
-    with lock:
-        with open('./status.json', 'r') as f:
-            idle = json.load(f)
-        
-        if idle['idle'] == False:
-            return {"error_code": 1, "error_msg": "Another job is training or testing."}
+    try:
+        with lock:
+            with open('./status.json', 'r') as f:
+                idle = json.load(f)
+            
+            if idle['idle'] == False:
+                return {"error_code": 1, "error_msg": "Another job is training or testing."}
 
-        init_status = dict()
-        init_status['epoch'] = 0
-        init_status['acc'] = 0
-        init_status['status'] = "Train"
-        init_status['idle'] = False
-        init_status['completed'] = False
+            init_status = dict()
+            init_status['epoch'] = 0
+            init_status['acc'] = 0
+            init_status['status'] = "Train"
+            init_status['idle'] = False
+            init_status['completed'] = False
+            with open('./status.json', 'w') as f:
+                json.dump(init_status, f)
+    
+            if not os.path.exists(job_dir):
+                os.mkdir(job_dir)
+            job = {"job_id": None, "pid": None, "name": name, "info": info, "type": "train", "status": None}
+
+            if weight_id is not None:
+                weight_idx, weight_list = _get_weight_index(weight_id)
+                if weight_idx is None:
+                    response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+                    return {"error_code": 2, "error_msg": "weight {weight_id} is not exist."}
+                
+            print("step 1. Weight management passed.")
+
+            # Download the dataset
+            if not os.path.exists(data_dir):
+                os.mkdir(data_dir)
+
+            data_zip_path = os.path.join(data_dir, str(data.filename))
+            file_name = str(data.filename)
+            file_name = file_name.replace('.zip', '')
+            
+            async with aiofiles.open(data_zip_path, mode="wb") as out_file:
+                content = await data.read()
+                await out_file.write(content)
+            
+            # Check if it is a zip file
+            if not zipfile.is_zipfile(data_zip_path):
+                os.remove(data_zip_path)
+                response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+                return {"error_code": 3, "error_msg": "Upload file is not a zip file."}
+            
+            # Extract files
+            with zipfile.ZipFile(data_zip_path, mode='r') as zip_file:
+                zip_file.extractall(data_dir)
+            
+            os.remove(data_zip_path)
+
+
+            # 檢查是否存在必要的目錄和文件
+            required_directories = [
+                os.path.join(data_dir, "non_defect_img"),
+                os.path.join(data_dir, "defect_img"),
+                os.path.join(data_dir, "non_defect_mask"),
+                os.path.join(data_dir, "defect_mask"),
+                # 如果有其他必要目錄也可以加入此列表
+            ]
+            for directory in required_directories:
+                if not os.path.exists(directory):
+                    with open('./status.json', 'r') as f:
+                        init_status = json.load(f)
+
+                    init_status['status'] = 'Stoped'
+                    init_status['idle'] = True
+                    init_status['completed'] = True
+                    
+                    with open('./status.json', 'w') as f:
+                        json.dump(init_status, f)
+                    response.status_code = status.HTTP_400_BAD_REQUEST
+                    return {"error_code": 6, "error_msg": f"Missing required directory: {directory}"}
+
+
+
+            print("step 2. Unsupervised dataset management passed.")
+
+            # Change the configs
+            if weight_id is not None:
+                cfg_path = os.path.join(str(weight_list['file_path']), 'config.yaml')
+                with open(cfg_path, 'r') as f:
+                    config = yaml.load(f, Loader = yaml.FullLoader)
+            else :    
+                with open('./config/config.yaml', 'r') as f:
+                    config = yaml.load(f, Loader = yaml.FullLoader)
+
+            config['exp_name'] = name if name is not None else config['exp_name']
+            config['batch_size'] = batch_size if batch_size is not None else config['batch_size']  
+            config['workers'] = workers if workers is not None else config['workers']
+            config['epochs'] = epochs if epochs is not None else config['epochs']
+            config['warmup_epoch'] = warmup_epoch if warmup_epoch is not None else config['warmup_epoch']
+            config['num_cluster'] = num_cluster if num_cluster is not None else config['num_cluster']
+            config['world_size'] = world_size if world_size is not None else config['world_size']
+            config['rank'] = rank if rank is not None else config['rank']
+
+            # 取得目前 train_moco_api.py 檔案的目錄路徑
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            temp_dir = os.path.join(current_dir, "data")
+            config['data_path'] = f"{temp_dir}"
+            config['negative_samples_path'] = f"{temp_dir}"
+
+            if resume is None:
+                config['resume'] = ''
+            elif isinstance(resume, int):
+                weight_path = weight_dir + '/' + str(resume)
+                if os.path.exists(weight_path):
+                    pth_files = [f for f in os.listdir(weight_path) if f.endswith('.pth.tar')]
+                    if pth_files:
+                        # 如果有 .pth.tar 檔，將檔案名加入路徑
+                        config['resume'] = os.path.join(weight_path, pth_files[0])
+                        print(f"Resume path set to: {config['resume']}")
+                    else:
+                        print(f"No .pth.tar file found in {weight_path}")
+                        config['resume'] = weight_path  # 仍將資料夾設定為 resume 路徑     
+                else:
+                    print('the path to resume is wrong.')
+                    config['resume'] = ''
+            else:
+                print('the path to resume is not exist.')
+                config['resume'] = ''    
+            
+            if weight_id is not None:
+                pretrained_path = os.path.join(weight_list['file_path'], weight_list['file_name'])
+                config['pretrained'] = pretrained_path
+            else:
+                config['pretrained'] = None
+            config['image_root'] = ''
+            
+            with open('./config/config.yaml', 'w') as f:
+                yaml.dump(config, f, sort_keys=False)
+
+            print("step 3. Config management passed")
+
+            job_list = _get_job_list()
+            if len(job_list) != 0:
+                job["job_id"] = job_list[-1]["job_id"] + 1
+            else:
+                job["job_id"] = 0
+            job["status"] = "running"
+            job_list.append(job)
+            job_path = os.path.join(job_dir, str(job["job_id"]))
+            if not os.path.exists(job_path):
+                os.mkdir(job_path)
+            _update_job_list(job_list)
+            # Call the watch dog program
+            if callback_url is None:
+                proc = subprocess.Popen(["python", "watchdog_2.py", "--j_id", str(job["job_id"])], shell=False, preexec_fn=os.setsid)
+            else:
+                proc = subprocess.Popen(["python", "watchdog_2.py", "--j_id", str(job["job_id"]), "--url", callback_url], shell=False, preexec_fn=os.setsid)
+
+            print("step 4. call watch_dog.py")
+
+            # Store the pid into job
+            job_list = _get_job_list()
+            current_job_id = next((i for i in range(len(job_list)) if job_list[i]['job_id'] == job["job_id"]), None)
+            job_list[current_job_id]["pid"] = proc.pid
+            _update_job_list(job_list)
+            
+            print("step 5. job management passed")
+
+        return {"job_id": job["job_id"], "error_code": 0}    
+    except Exception as e:
+        with open('./status.json', 'r') as f:
+            init_status = json.load(f)
+
+        init_status['idle'] = True
+        init_status['completed'] = True
+        
         with open('./status.json', 'w') as f:
             json.dump(init_status, f)
-   
-        if not os.path.exists(job_dir):
-            os.mkdir(job_dir)
-        job = {"job_id": None, "pid": None, "name": name, "info": info, "type": "train", "status": None}
 
-        if weight_id is not None:
-            weight_idx, weight_list = _get_weight_index(weight_id)
-            if weight_idx is None:
-                response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-                return {"error_code": 2, "error_msg": "weight {weight_id} is not exist."}
-            
-        print("step 1. Weight management passed.")
+        print("An error occurred:", str(e))
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error_code": 5, "error_msg": str(e)}
 
-        # Download the dataset
-        if not os.path.exists(data_dir):
-            os.mkdir(data_dir)
 
-        data_zip_path = os.path.join(data_dir, str(data.filename))
-        file_name = str(data.filename)
-        file_name = file_name.replace('.zip', '')
-        
-        async with aiofiles.open(data_zip_path, mode="wb") as out_file:
-            content = await data.read()
-            await out_file.write(content)
-        
-        # Check if it is a zip file
-        if not zipfile.is_zipfile(data_zip_path):
-            os.remove(data_zip_path)
-            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-            return {"error_code": 3, "error_msg": "Upload file is not a zip file."}
-        
-        # Extract files
-        with zipfile.ZipFile(data_zip_path, mode='r') as zip_file:
-            zip_file.extractall(data_dir)
-        
-        os.remove(data_zip_path)
-
-        print("step 2. Unsupervised dataset management passed.")
-
-        # Change the configs
-        if weight_id is not None:
-            cfg_path = os.path.join(str(weight_list['file_path']), 'config.yaml')
-            with open(cfg_path, 'r') as f:
-                config = yaml.load(f, Loader = yaml.FullLoader)
-        else :    
-            with open('./config/config.yaml', 'r') as f:
-                config = yaml.load(f, Loader = yaml.FullLoader)
-
-        config['exp_name'] = name if name is not None else config['exp_name']
-        config['batch_size'] = batch_size if batch_size is not None else config['batch_size']  
-        config['workers'] = workers if workers is not None else config['workers']
-        config['epochs'] = epochs if epochs is not None else config['epochs']
-        config['warmup_epoch'] = warmup_epoch if warmup_epoch is not None else config['warmup_epoch']
-        config['num_cluster'] = num_cluster if num_cluster is not None else config['num_cluster']
-        config['world_size'] = world_size if world_size is not None else config['world_size']
-        config['rank'] = rank if rank is not None else config['rank']
-
-        # 取得目前 train_moco_api.py 檔案的目錄路徑
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        temp_dir = os.path.join(current_dir, "data")
-        config['data_path'] = f"{temp_dir}"
-        config['negative_samples_path'] = f"{temp_dir}"
-
-        if resume is None:
-            config['resume'] = ''
-        elif isinstance(resume, int):
-            weight_path = weight_dir + '/' + str(resume)
-            if os.path.exists(weight_path):
-                pth_files = [f for f in os.listdir(weight_path) if f.endswith('.pth.tar')]
-                if pth_files:
-                    # 如果有 .pth.tar 檔，將檔案名加入路徑
-                    config['resume'] = os.path.join(weight_path, pth_files[0])
-                    print(f"Resume path set to: {config['resume']}")
-                else:
-                    print(f"No .pth.tar file found in {weight_path}")
-                    config['resume'] = weight_path  # 仍將資料夾設定為 resume 路徑     
-            else:
-                print('the path to resume is wrong.')
-                config['resume'] = ''
-        else:
-            print('the path to resume is not exist.')
-            config['resume'] = ''    
-        
-        if weight_id is not None:
-            pretrained_path = os.path.join(weight_list['file_path'], weight_list['file_name'])
-            config['pretrained'] = pretrained_path
-        else:
-            config['pretrained'] = None
-        config['image_root'] = ''
-        
-        with open('./config/config.yaml', 'w') as f:
-            yaml.dump(config, f, sort_keys=False)
-
-        print("step 3. Config management passed")
-
-        job_list = _get_job_list()
-        if len(job_list) != 0:
-            job["job_id"] = job_list[-1]["job_id"] + 1
-        else:
-            job["job_id"] = 0
-        job["status"] = "running"
-        job_list.append(job)
-        job_path = os.path.join(job_dir, str(job["job_id"]))
-        if not os.path.exists(job_path):
-            os.mkdir(job_path)
-        _update_job_list(job_list)
-        # Call the watch dog program
-        if callback_url is None:
-            proc = subprocess.Popen(["python", "watchdog_2.py", "--j_id", str(job["job_id"])], shell=False, preexec_fn=os.setsid)
-        else:
-            proc = subprocess.Popen(["python", "watchdog_2.py", "--j_id", str(job["job_id"]), "--url", callback_url], shell=False, preexec_fn=os.setsid)
-
-        print("step 4. call watch_dog.py")
-
-        # Store the pid into job
-        job_list = _get_job_list()
-        current_job_id = next((i for i in range(len(job_list)) if job_list[i]['job_id'] == job["job_id"]), None)
-        job_list[current_job_id]["pid"] = proc.pid
-        _update_job_list(job_list)
-        
-        print("step 5. job management passed")
-
-    return {"job_id": job["job_id"], "error_code": 0}    
 
 @app.get("/train/")
 async def get_train(response: Response):

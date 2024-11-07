@@ -1,10 +1,10 @@
 aug_plus: true
-batch_size: 4
+batch_size: 1
 cos: true
 data_path: /mnt/backups/kevin/fastapi_pcl/train_pcl_api/code/data
 dist_backend: nccl
 dist_url: tcp://localhost:10001
-epochs: 20
+epochs: 10
 exp_dir: weights
 gpu: 0
 low_dim: 128
@@ -28,7 +28,7 @@ warmup_epoch: 10
 weight_decay: 0.0001
 workers: 2
 world_size: 1
-exp_name: '123'
+exp_name: '55555'
 pretrained: null
 image_root: ''
 negative_samples_path: /mnt/backups/kevin/fastapi_pcl/train_pcl_api/code/data

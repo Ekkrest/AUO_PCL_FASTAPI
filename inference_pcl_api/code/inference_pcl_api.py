@@ -570,11 +570,15 @@ async def get_load_weight(response: Response):
     Returns:
         loaded models: models_list, int: error_code
     """
+    pid = os.getpid()
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    logger.info(f"[{timestamp}] Process {pid} is using get_load_weight function.")
+    
     models_list = []
     for i in share_moco_models:
         temp = {"model_id" : i['model_id'], "name" :str(i['name']), "model_path": str(i['model_path']) }
         models_list.append(temp) 
-    return {"loaded models": models_list, "error_code": 0}
+    return {"loaded models": models_list, "error_code": 0, "pid": pid}
 
 @app.get("/vqvae_weight/load/")
 async def get_load_vqvae_weight(response: Response):
@@ -653,7 +657,7 @@ async def delete_load_vqvae_weight(response: Response, model_id: int):
         return {"error_code": 1, "error_code": "Model is not loaded in the memory."}
 
 @app.post("/inference/batch")
-async def Inference_Batch(response: Response, file: UploadFile, model_id: int, n_clusters: int = 4, device: Device = "cpu", result_name: Union[str, None] = None):
+async def Inference_Batch(response: Response, background_tasks: BackgroundTasks, file: UploadFile, model_id: int, n_clusters: int = 4, device: Device = "cpu", result_name: Union[str, None] = None):
     """Inference a batch of images with loaded model (model_id)
 
     Args:
@@ -707,8 +711,8 @@ async def Inference_Batch(response: Response, file: UploadFile, model_id: int, n
 
     # Prepare the dataset using the extracted images
     test_dataset = InferenceDataset(
-        folder_path1=os.path.join(extract_dir, base_name, 'defect_img'),
-        folder_path2=os.path.join(extract_dir, base_name, 'defect_mask'),
+        folder_path1=os.path.join(extract_dir, 'defect_img'),
+        folder_path2=os.path.join(extract_dir, 'defect_mask'),
         transform=transform
     )
     dataloader = DataLoader(test_dataset, batch_size=10, shuffle=False)
@@ -742,6 +746,8 @@ async def Inference_Batch(response: Response, file: UploadFile, model_id: int, n
     shutil.rmtree(extract_dir)  # Remove the extracted directory
     os.remove(zip_save_path)  # Remove the saved zip file
 
+    background_tasks.add_task(_delayed_remove, output_csv_path, delay=100)
+
     # print("copy time : ", (copy_end - inference_start))
     # print("inference time : ", (inference_end - inference_start))
     logger.info("copy time : %s", (copy_end - inference_start))
@@ -752,6 +758,7 @@ async def Inference_Batch(response: Response, file: UploadFile, model_id: int, n
 
 @app.post("/inference/all_in_one")
 async def post_inference(response: Response, 
+    background_tasks: BackgroundTasks,
     name: str, data: UploadFile, 
     vqvae_model_id: int,
     moco_model_id: int, 
@@ -829,7 +836,6 @@ async def post_inference(response: Response,
         config['defect_img_folder'] = os.path.join('./dataset', name, 'defect_img') 
         config['defect_mask_folder'] = os.path.join('./dataset', name, 'defect_mask') 
         config['result_name'] = result_name if result_name is not None else config['result_name']
-
         with open('./vqvae_config/config.yaml', 'w') as f:
             yaml.dump(config, f, sort_keys=False)
 
@@ -851,8 +857,8 @@ async def post_inference(response: Response,
         # Clean up: remove the extracted files and the uploaded zip file
         #shutil.rmtree(vqvae_data_dir)  # Remove the extracted directory
         # 定義重試機制，等待csv檔案完成
-        max_retries = 5  # 重試次數
-        wait_time = 5    # 每次重試等待的秒數
+        max_retries = 10  # 重試次數
+        wait_time = 10    # 每次重試等待的秒數
         output_csv_path = f"./result/{result_name}.csv"
         time.sleep(wait_time)
 
@@ -860,7 +866,10 @@ async def post_inference(response: Response,
             idle = json.load(f)
         
         for _ in range(max_retries):
+            with open('./status.json', 'r') as f:
+                idle = json.load(f)
             if idle['completed'] == True:
+                background_tasks.add_task(_delayed_remove, output_csv_path, delay=100)
                 return FileResponse(output_csv_path, media_type='application/octet-stream', filename=f"{result_name}.csv")
             else:
                 # 如果檔案還沒生成，等待並重試
@@ -869,7 +878,6 @@ async def post_inference(response: Response,
         # 若嘗試數次後檔案依然不存在，返回錯誤訊息
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error_code": 4, "error_msg": "Zip file not found after waiting."}
-
 
 if __name__ == "__main__":
     logger.info("Fast API Activate !!!")
