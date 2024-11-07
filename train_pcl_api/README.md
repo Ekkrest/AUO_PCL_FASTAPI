@@ -1,6 +1,6 @@
 ## 從github clone下，到cd到train_pcl_api路徑  
 ```
-cd AUO_PCL_FASTAPI/FASTAPI_PCL/train_pcl_api
+cd AUO_PCL_FASTAPI/train_pcl_api
 ```
 
 ## 建立image，在terminal輸入
