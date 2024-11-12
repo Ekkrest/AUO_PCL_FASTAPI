@@ -52,13 +52,6 @@ vqvae_data_dir = './vqvae_data'
 image_type = ('.png', '.jpg', '.jpeg', '.bmp')
 weight_type = ('h5', 'ckpt', 'pth', 'pt', 'tar')
 
-vqvae_manager = Manager()
-moco_manager = Manager()
-share_moco_models = moco_manager.list([])
-share_vqvae_models = vqvae_manager.list([])
-process_model = [{'model_id' : None, 'model' : None}]
-vqvae_process_model = [{'model_id' : None, 'model' : None}]
-
 class Device(str, Enum):
     cpu = "cpu"
     gpu = "gpu"
@@ -131,32 +124,6 @@ def _critical_section_vqvae_weight_id():
         print(f"Process {os.getpid()} is leaving the critical section. (PID: {os.getpid()})")
     return weight_list_id, w
 
-def _critical_section_share_models(model_info):
-    with lock:
-        print(f"Process {os.getpid()} is entering the critical section. (PID: {os.getpid()})")
-        if len(share_moco_models) == 0:
-            model_info['model_id'] = 0
-            share_moco_models.append(model_info)
-        else:
-            model_info['model_id'] = int(len(share_moco_models))
-            share_moco_models.append(model_info)
-        print("model ID " + str(model_info['model_id']) + " is created.")
-        print(f"Process {os.getpid()} is leaving the critical section. (PID: {os.getpid()})")
-    return model_info['model_id']
-
-def _critical_section_vqvae_share_models(model_info):
-    with lock:
-        print(f"Process {os.getpid()} is entering the critical section. (PID: {os.getpid()})")
-        if len(share_vqvae_models) == 0:
-            model_info['model_id'] = 0
-            share_vqvae_models.append(model_info)
-        else:
-            model_info['model_id'] = int(len(share_vqvae_models))
-            share_vqvae_models.append(model_info)
-        print("model ID " + str(model_info['model_id']) + " is created.")
-        print(f"Process {os.getpid()} is leaving the critical section. (PID: {os.getpid()})")
-    return model_info['model_id']
-
 def _get_weight_list():
     if not os.path.isfile(weight_info):
         return []
@@ -184,7 +151,6 @@ def _updata_vqvae_weight_list(weight_list):
         json.dump(weight_list, file, ensure_ascii=False, indent=4)
     logger.info("weight list update!")
     # print("weight list update!")
-
 
 def _load_model_from_path(model_path, device):
     model = Res2netFFM.Res2Net(block=Res2netFFM.Bottle2neck, layers=[3, 4, 6, 3], num_classes=128)
@@ -222,7 +188,6 @@ def _load_model_from_path(model_path, device):
         print(f"Error loading model: {e}")
         return None
     
-
 def _extract_features(model, dataloader, device):
     all_features = []
     filenames_list = []
@@ -234,27 +199,6 @@ def _extract_features(model, dataloader, device):
             all_features.append(features)
             filenames_list.extend(filenames)  # 收集所有檔案名稱
     return torch.cat(all_features), filenames_list
-
-
-def _inference(imgs, model, best_cls):
-    cls_name = str(best_cls[:-6]) #刪除'-top-1' 
-    with torch.no_grad():
-        if cls_name == 'combiner':
-            logits = model(imgs)[cls_name]
-        else:
-            logits = model(imgs)[cls_name].mean(1)
-    
-    pred = torch.max(logits, dim=-1)[1]
-    score = torch.max(logits, dim=-1)[0]
-    return pred, score
-
-def _check_weight_list(weight_list, weight_id):
-    w_idx = next((i for i in range(len(weight_list))
-                  if weight_list[i]['weight_id'] == weight_id), None)
-    if w_idx is None:
-        return False
-    else:
-        return True
 
 def _get_weight_index(weight_id):
     weight_list = _get_weight_list()
@@ -457,7 +401,6 @@ async def post__vqvae_weight(response: Response, weight: UploadFile, name: str, 
     logger.info("post_weight!")
     return {"weight_id": w["weight_id"], "error_code": error_code}
 
-
 @app.delete("/weight/{weight_id}")
 async def delete_weight(response: Response, weight_id: int):
     """Delete the weights of weight_id
@@ -510,154 +453,6 @@ async def delete_weight(response: Response, weight_id: int):
 
     return {"error_code": error_code}
 
-@app.post("/weight/load/{weight_id}")
-async def post_load_weight(response: Response, weight_id: int):
-    """Load the weight of weight_id
-
-    Args:
-        response (Response): response
-        weight_id (int): the weight of weight_id to be loaded
-    Returns:
-        int: error_code
-    """
-
-    weight_list = _get_weight_list()
-
-    if _check_weight_list(weight_list, weight_id):
-        id, weight_list = _get_weight_index(weight_id)
-        model_info={
-            "model_id": None,
-            "name": str(weight_list['name']),
-            "model_path": str(os.path.join(weight_list['file_path'], weight_list['file_name'])),
-        }
-        #model_id = _critical_section_share_models(model_info)
-        model_id = _add_model_to_shared_file(model_info, SHARED_MOCO_FILE_PATH, FILE_LOCK_PATH_MOCO)
-    else:
-        return {"error_code": 1, "error_msg": "Model is not exist."}
-
-    return {"error_code": 0, "model_id": model_id}
-
-@app.post("/vqvae_weight/load/{weight_id}")
-async def post_load_vqvae_weight(response: Response, weight_id: int):
-    """Load the weight of weight_id
-
-    Args:
-        response (Response): response
-        weight_id (int): the weight of weight_id to be loaded
-    Returns:
-        int: error_code
-    """
-
-    weight_list = _get_vqvae_weight_list()
-
-    if _check_weight_list(weight_list, weight_id):
-        id, weight_list = _get_vqvae_weight_index(weight_id)
-        model_info={
-            "model_id": None,
-            "name": str(weight_list['name']),
-            "model_path": str(os.path.join(weight_list['file_path'], weight_list['file_name'])),
-        }
-        model_id = _critical_section_vqvae_share_models(model_info)
-    else:
-        return {"error_code": 1, "error_msg": "Model is not exist."}
-
-    return {"error_code": 0, "model_id": model_id}
-
-@app.get("/weight/load/")
-async def get_load_weight(response: Response):
-    """Get the model list
-    Args:
-        response (Response): response
-    Returns:
-        loaded models: models_list, int: error_code
-    """
-    pid = os.getpid()
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    logger.info(f"[{timestamp}] Process {pid} is using get_load_weight function.")
-    
-    models_list = []
-    for i in share_moco_models:
-        temp = {"model_id" : i['model_id'], "name" :str(i['name']), "model_path": str(i['model_path']) }
-        models_list.append(temp)
-    
-    return {"loaded models": models_list, "error_code": 0, "pid": pid}
-
-@app.get("/vqvae_weight/load/")
-async def get_load_vqvae_weight(response: Response):
-    """Get the model list
-    Args:
-        response (Response): response
-    Returns:
-        loaded models: models_list, int: error_code
-    """
-    models_list = []
-    for i in share_vqvae_models:
-        temp = {"model_id" : i['model_id'], "name" :str(i['name']), "model_path": str(i['model_path']) }
-        models_list.append(temp) 
-    return {"loaded models": models_list, "error_code": 0}
-
-def find(weight_id):
-    model_exist = next((item for item in share_moco_models if item["model_id"] == weight_id), None)
-    return model_exist
-
-def vqvae_find(weight_id):
-    model_exist = next((item for item in share_vqvae_models if item["model_id"] == weight_id), None)
-    return model_exist
-
-def delete(weight_id):
-    model_index = next((id for id, item in enumerate(share_moco_models) if item["model_id"] == weight_id), None)
-    del share_moco_models[model_index]
-
-def vqvae_delete(weight_id):
-    model_index = next((id for id, item in enumerate(share_vqvae_models) if item["model_id"] == weight_id), None)
-    del share_moco_models[model_index]
-
-@app.delete("/weight/load/{weight_id}")
-async def delete_load_weight(response: Response, model_id: int):
-    """Unload the model
-
-    Args:
-        response (Response): response
-
-    Returns:
-        int: error_code
-    """
-
-    model_exist = find(model_id)
-    if model_exist is not None:
-        delete(model_id)
-        global process_model
-        process_model = share_moco_models[:]
-        print(len(process_model))
-        torch.cuda.empty_cache()
-        logger.info("delete_load_weight!")
-        return {"error_code": 0}
-    else:
-        return {"error_code": 1, "error_code": "Model is not loaded in the memory."}
-    
-@app.delete("/vqvae_weight/load/{weight_id}")
-async def delete_load_vqvae_weight(response: Response, model_id: int):
-    """Unload the model
-
-    Args:
-        response (Response): response
-
-    Returns:
-        int: error_code
-    """
-
-    model_exist = vqvae_find(model_id)
-    if model_exist is not None:
-        vqvae_delete(model_id)
-        global vqvae_process_model
-        vqvae_process_model = share_vqvae_models[:]
-        print(len(vqvae_process_model))
-        torch.cuda.empty_cache()
-        logger.info("delete_load_weight!")
-        return {"error_code": 0}
-    else:
-        return {"error_code": 1, "error_code": "Model is not loaded in the memory."}
-
 @app.post("/inference/batch")
 async def Inference_Batch(response: Response, background_tasks: BackgroundTasks, file: UploadFile, model_id: int, n_clusters: int = 4, device: Device = "cpu", result_name: Union[str, None] = None):
     """Inference a batch of images with loaded model (model_id)
@@ -677,7 +472,6 @@ async def Inference_Batch(response: Response, background_tasks: BackgroundTasks,
         weight_list = json.load(f)
         print(weight_info)
 
-    #share_model_index = next((id for id, item in enumerate(share_moco_models) if item["model_id"] == model_id), None)
     model_info = next((item for item in weight_list if item['weight_id'] == model_id), None)
 
     if model_info is None:
@@ -692,8 +486,6 @@ async def Inference_Batch(response: Response, background_tasks: BackgroundTasks,
         if torch.cuda.is_available():
             device = torch.device("cuda")
 
-    #model_info = share_moco_models[share_model_index]
-    print(model_info)
     model_path = os.path.join(model_info["file_path"], model_info["file_name"])
     model = _load_model_from_path(model_path, device=device)
     if model is None:
