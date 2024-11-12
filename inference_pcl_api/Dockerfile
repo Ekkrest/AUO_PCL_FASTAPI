@@ -19,5 +19,4 @@ ENV PATH=/opt/conda/envs/ffmpcl/bin:$PATH
 
 # 設置工作目錄和啟動命令
 WORKDIR /code
-# CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "inference_pcl_api:app"]
-CMD ["uvicorn", "inference_pcl_api:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "inference_pcl_api:app"]

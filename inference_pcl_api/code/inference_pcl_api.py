@@ -29,6 +29,7 @@ import time
 import Identity
 import subprocess
 import Res2netFFM
+from filelock import FileLock
 from customDataset import InferenceDataset
 
 logging.basicConfig(
@@ -57,7 +58,6 @@ share_moco_models = moco_manager.list([])
 share_vqvae_models = vqvae_manager.list([])
 process_model = [{'model_id' : None, 'model' : None}]
 vqvae_process_model = [{'model_id' : None, 'model' : None}]
-
 
 class Device(str, Enum):
     cpu = "cpu"
@@ -530,7 +530,8 @@ async def post_load_weight(response: Response, weight_id: int):
             "name": str(weight_list['name']),
             "model_path": str(os.path.join(weight_list['file_path'], weight_list['file_name'])),
         }
-        model_id = _critical_section_share_models(model_info)
+        #model_id = _critical_section_share_models(model_info)
+        model_id = _add_model_to_shared_file(model_info, SHARED_MOCO_FILE_PATH, FILE_LOCK_PATH_MOCO)
     else:
         return {"error_code": 1, "error_msg": "Model is not exist."}
 
@@ -577,7 +578,8 @@ async def get_load_weight(response: Response):
     models_list = []
     for i in share_moco_models:
         temp = {"model_id" : i['model_id'], "name" :str(i['name']), "model_path": str(i['model_path']) }
-        models_list.append(temp) 
+        models_list.append(temp)
+    
     return {"loaded models": models_list, "error_code": 0, "pid": pid}
 
 @app.get("/vqvae_weight/load/")
@@ -670,11 +672,18 @@ async def Inference_Batch(response: Response, background_tasks: BackgroundTasks,
     """
 
     inference_start = time.time()
-    share_model_index = next((id for id, item in enumerate(share_moco_models) if item["model_id"] == model_id), None)
-    if share_model_index is None:
+
+    with open(weight_info, 'r') as f:
+        weight_list = json.load(f)
+        print(weight_info)
+
+    #share_model_index = next((id for id, item in enumerate(share_moco_models) if item["model_id"] == model_id), None)
+    model_info = next((item for item in weight_list if item['weight_id'] == model_id), None)
+
+    if model_info is None:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error_code": 1, "error_msg": "Model is not exist."}
-    
+      
     copy_end = time.time()
 
     if device == 'cpu':
@@ -683,9 +692,10 @@ async def Inference_Batch(response: Response, background_tasks: BackgroundTasks,
         if torch.cuda.is_available():
             device = torch.device("cuda")
 
-    model_info = share_moco_models[share_model_index]
+    #model_info = share_moco_models[share_model_index]
     print(model_info)
-    model = _load_model_from_path(model_info["model_path"], device=device)
+    model_path = os.path.join(model_info["file_path"], model_info["file_name"])
+    model = _load_model_from_path(model_path, device=device)
     if model is None:
         return {"error_code": 3, "error_msg": "Failed to load the model."}
 
@@ -783,101 +793,111 @@ async def post_inference(response: Response,
         job_id: the job_id of the trianing process
 
     """
-    with lock:
+ 
+    with open(vqvae_weight_info, 'r') as f:
+        vqvae_weight_list = json.load(f)
+        print(vqvae_weight_info)
+    with open(weight_info, 'r') as f:
+        moco_weight_list = json.load(f)
+        print(weight_info)
 
-        share_model_index = next((id for id, item in enumerate(share_vqvae_models) if item["model_id"] == vqvae_model_id), None)
-        moco_share_model_index = next((id for id, item in enumerate(share_moco_models) if item["model_id"] == moco_model_id), None)
-        model_info = share_vqvae_models[share_model_index]
-        moco_model_info = share_moco_models[moco_share_model_index]
-        print(model_info)
-        print(moco_model_info)    
-        print("step 1. Weight management passed")
-        # Download the dataset
-        if not os.path.exists(vqvae_data_dir):
-            os.mkdir(vqvae_data_dir)
+    vqvae_model_info = next((item for item in vqvae_weight_list if item['weight_id'] == vqvae_model_id), None)
+    moco_model_info = next((item for item in moco_weight_list if item['weight_id'] == moco_model_id), None)
+    if vqvae_model_info is None:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error_code": 1, "error_msg": "vqvae Model is not exist."}
+    if moco_model_info is None:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error_code": 1, "error_msg": "moco Model is not exist."}
+    
+    moco_model_path = str(os.path.join(moco_model_info["file_path"], moco_model_info["file_name"]))
+    vqvae_model_path = str(os.path.join(vqvae_model_info["file_path"], vqvae_model_info["file_name"]))
 
-        data_zip_path = os.path.join(vqvae_data_dir, str(data.filename))
-        async with aiofiles.open(data_zip_path, mode="wb") as out_file:
-            print(data_zip_path)
-            content = await data.read()
-            await out_file.write(content)
+    if not os.path.exists(vqvae_data_dir):
+        os.mkdir(vqvae_data_dir)
+
+    data_zip_path = os.path.join(vqvae_data_dir, str(data.filename))
+    async with aiofiles.open(data_zip_path, mode="wb") as out_file:
+        print(data_zip_path)
+        content = await data.read()
+        await out_file.write(content)
         
-        # Check if it is a zip file
-        if not zipfile.is_zipfile(data_zip_path):
-            os.remove(data_zip_path)
-            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-            return {"error_code": 3, "error_msg": "Upload file is not a zip file."}
-        
-        # Extract files
-        with zipfile.ZipFile(data_zip_path, mode='r') as zip_file:
-            zip_file.extractall(vqvae_data_dir)
+    # Check if it is a zip file
+    if not zipfile.is_zipfile(data_zip_path):
         os.remove(data_zip_path)
-        data_path, _ = os.path.splitext(data_zip_path)
-
-        print("step 2. Dataset managemet passed")
-        if device == 'cpu':
-            device = "cpu"
-        else:
-            if torch.cuda.is_available():
-                device = "cuda"
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error_code": 3, "error_msg": "Upload file is not a zip file."}
         
-        with open('./vqvae_config/config.yaml', 'r') as f:
-                config = yaml.load(f, Loader = yaml.FullLoader)
+    # Extract files
+    with zipfile.ZipFile(data_zip_path, mode='r') as zip_file:
+        zip_file.extractall(vqvae_data_dir)
+    os.remove(data_zip_path)
+    data_path, _ = os.path.splitext(data_zip_path)
 
-        config['exp_name'] = name if name is not None else config['exp_name']
-        config['data_dir'] = data_path
-        config['batch_size'] = batch_size if batch_size is not None else config['batch_size']
-        config['hidden_size'] = hidden_size if hidden_size is not None else config['hidden_size']
-        config['k'] = k if k is not None else config['k']
-        config['model_path'] = model_info["model_path"]
-        config['moco_model_path'] = moco_model_info['model_path']
-        config['n_clusters'] = n_clusters if n_clusters is not None else config['n_clusters']
-        config['device'] = device if device is not None else config['device']
-        config['defect_img_folder'] = os.path.join('./dataset', name, 'defect_img') 
-        config['defect_mask_folder'] = os.path.join('./dataset', name, 'defect_mask') 
-        config['result_name'] = result_name if result_name is not None else config['result_name']
-        with open('./vqvae_config/config.yaml', 'w') as f:
-            yaml.dump(config, f, sort_keys=False)
-
-        print("step 3. Config management passed")
-
-        # Call the watch dog program
-        proc = subprocess.Popen(["python", "watchdog_2.py"], shell=False, preexec_fn=os.setsid)
-        print("step 4. call watch_dog.py")
+    print("step 2. Dataset managemet passed")
+    if device == 'cpu':
+        device = "cpu"
+    else:
+        if torch.cuda.is_available():
+            device = "cuda"
         
-        # 使用 communicate() 確保進程完成執行
-        stdout, stderr = proc.communicate()
+    with open('./vqvae_config/config.yaml', 'r') as f:
+            config = yaml.load(f, Loader = yaml.FullLoader)
 
-        # 檢查進程的返回碼是否為 0，表示成功執行
-        if proc.returncode != 0:
-            print(f"watchdog_2.py 執行失敗: {stderr}")
-            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-            return {"error_code": 5, "error_msg": "Error occurred during execution of watchdog_2.py."}
+    config['exp_name'] = name if name is not None else config['exp_name']
+    config['data_dir'] = data_path
+    config['batch_size'] = batch_size if batch_size is not None else config['batch_size']
+    config['hidden_size'] = hidden_size if hidden_size is not None else config['hidden_size']
+    config['k'] = k if k is not None else config['k']
+    config['model_path'] = vqvae_model_path
+    config['moco_model_path'] = moco_model_path
+    config['n_clusters'] = n_clusters if n_clusters is not None else config['n_clusters']
+    config['device'] = device if device is not None else config['device']
+    config['defect_img_folder'] = os.path.join('./dataset', name, 'defect_img') 
+    config['defect_mask_folder'] = os.path.join('./dataset', name, 'defect_mask') 
+    config['result_name'] = result_name if result_name is not None else config['result_name']
+    with open('./vqvae_config/config.yaml', 'w') as f:
+        yaml.dump(config, f, sort_keys=False)
 
-        # Clean up: remove the extracted files and the uploaded zip file
-        #shutil.rmtree(vqvae_data_dir)  # Remove the extracted directory
-        # 定義重試機制，等待csv檔案完成
-        max_retries = 10  # 重試次數
-        wait_time = 10    # 每次重試等待的秒數
-        output_csv_path = f"./result/{result_name}.csv"
-        time.sleep(wait_time)
+    print("step 3. Config management passed")
 
+    # Call the watch dog program
+    proc = subprocess.Popen(["python", "watchdog_2.py"], shell=False, preexec_fn=os.setsid)
+    print("step 4. call watch_dog.py")
+        
+    # 使用 communicate() 確保進程完成執行
+    stdout, stderr = proc.communicate()
+
+    # 檢查進程的返回碼是否為 0，表示成功執行
+    if proc.returncode != 0:
+        print(f"watchdog_2.py 執行失敗: {stderr}")
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error_code": 5, "error_msg": "Error occurred during execution of watchdog_2.py."}
+
+    # Clean up: remove the extracted files and the uploaded zip file
+    #shutil.rmtree(vqvae_data_dir)  # Remove the extracted directory
+    # 定義重試機制，等待csv檔案完成
+    max_retries = 10  # 重試次數
+    wait_time = 10    # 每次重試等待的秒數
+    output_csv_path = f"./result/{result_name}.csv"
+    time.sleep(wait_time)
+
+    with open('./status.json', 'r') as f:
+        idle = json.load(f)
+        
+    for _ in range(max_retries):
         with open('./status.json', 'r') as f:
             idle = json.load(f)
-        
-        for _ in range(max_retries):
-            with open('./status.json', 'r') as f:
-                idle = json.load(f)
-            if idle['completed'] == True:
-                background_tasks.add_task(_delayed_remove, output_csv_path, delay=100)
-                return FileResponse(output_csv_path, media_type='application/octet-stream', filename=f"{result_name}.csv")
-            else:
-                # 如果檔案還沒生成，等待並重試
-                time.sleep(wait_time)
+        if idle['completed'] == True:
+            background_tasks.add_task(_delayed_remove, output_csv_path, delay=100)
+            return FileResponse(output_csv_path, media_type='application/octet-stream', filename=f"{result_name}.csv")
+        else:
+            # 如果檔案還沒生成，等待並重試
+            time.sleep(wait_time)
 
-        # 若嘗試數次後檔案依然不存在，返回錯誤訊息
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return {"error_code": 4, "error_msg": "Zip file not found after waiting."}
+    # 若嘗試數次後檔案依然不存在，返回錯誤訊息
+    response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    return {"error_code": 4, "error_msg": "Zip file not found after waiting."}
 
 if __name__ == "__main__":
     logger.info("Fast API Activate !!!")

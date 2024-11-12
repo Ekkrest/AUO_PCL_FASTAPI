@@ -166,4 +166,5 @@ dependencies:
       - unicorn==2.1.0
       - uvicorn==0.30.6
       - watchdog==5.0.2
+      - redis==5.2.0
 prefix: /home/kevin/anaconda3/envs/ffmpcl

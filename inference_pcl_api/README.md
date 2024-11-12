@@ -1,6 +1,6 @@
 ## 從github clone下，到cd到inference_pcl_api路徑  
 ```
-cd AUO_PCL_FASTAPI/FASTAPI_PCL/inference_pcl_api
+cd AUO_PCL_FASTAPI/inference_pcl_api
 ```
 
 ## 建立image，在terminal輸入
