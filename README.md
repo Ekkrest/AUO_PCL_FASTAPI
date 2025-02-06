@@ -23,7 +23,7 @@
     │   ├── code  
     │   │   ├── some python files  
     │   │   ├── other files  
-    │   │   ├── pretrained(在train_herbs_api README說的路徑)  
+    │   │   ├── pretrained(在train_pcl_api README說的路徑)  
     │   │   └── ...  
     │   │  
     │   ├── Dockerfile  
